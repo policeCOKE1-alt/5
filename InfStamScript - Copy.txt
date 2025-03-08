@@ -1,0 +1,120 @@
+-- This script is meant to be injected via an executor.
+-- It tracks external changes to the player's WalkSpeed (to allow path boosts),
+-- applies a sprint multiplier when LeftShift is held,
+-- and keeps stamina/overhead overrides as needed.
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+
+-- Default base speed and sprint multiplier
+local defaultBaseSpeed = 15
+local sprintMultiplier = 23 / 15  -- ≈1.5333
+
+-- We'll track the player's current base speed (which may be externally boosted)
+local currentBaseSpeed = defaultBaseSpeed
+
+-- Flags for controlling sprint
+local overheadActive = false  -- true when spacebar (overhead) is held
+-- Stamina override: if a NumberValue named "Stamina" exists and its value is 0, force sprint
+
+-- Overhead detection (using spacebar)
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.Space then
+        overheadActive = true
+    end
+end)
+UserInputService.InputEnded:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.Space then
+        overheadActive = false
+    end
+end)
+
+-- Metamethod hook to intercept WalkSpeed changes on the humanoid.
+local function overrideWalkSpeed(humanoid, character)
+    local stamina = character:FindFirstChild("Stamina")
+    local mt = getrawmetatable(game)
+    local oldNewIndex = mt.__newindex
+    setreadonly(mt, false)
+    mt.__newindex = newcclosure(function(t, k, v)
+        if t == humanoid and k == "WalkSpeed" then
+            -- When not sprinting (LeftShift not held) or when overhead is active,
+            -- allow external assignments to update currentBaseSpeed.
+            if not UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or overheadActive then
+                currentBaseSpeed = v
+                return oldNewIndex(t, k, v)
+            else
+                -- When LeftShift is held (and overhead is not active),
+                -- if stamina is 0 force sprint multiplier; otherwise, use sprint multiplier.
+                if stamina and stamina.Value == 0 then
+                    return oldNewIndex(t, k, currentBaseSpeed * sprintMultiplier)
+                else
+                    return oldNewIndex(t, k, currentBaseSpeed * sprintMultiplier)
+                end
+            end
+        end
+        return oldNewIndex(t, k, v)
+    end)
+    setreadonly(mt, true)
+end
+
+-- RenderStepped loop to enforce our desired WalkSpeed each frame.
+local function enforceSpeed(humanoid, character)
+    local stamina = character:FindFirstChild("Stamina")
+    RunService.RenderStepped:Connect(function()
+        -- Priority: if overhead is active, force base speed.
+        if overheadActive then
+            if humanoid.WalkSpeed ~= currentBaseSpeed then
+                humanoid.WalkSpeed = currentBaseSpeed
+            end
+        -- If stamina is 0, force sprint speed regardless.
+        elseif stamina and stamina.Value == 0 then
+            if humanoid.WalkSpeed ~= currentBaseSpeed * sprintMultiplier then
+                humanoid.WalkSpeed = currentBaseSpeed * sprintMultiplier
+            end
+        -- If LeftShift is held, enforce sprint multiplier.
+        elseif UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
+            if humanoid.WalkSpeed ~= currentBaseSpeed * sprintMultiplier then
+                humanoid.WalkSpeed = currentBaseSpeed * sprintMultiplier
+            end
+        else
+            -- When not sprinting, allow external changes.
+            -- Update our base speed if external scripts change WalkSpeed (like from a path boost).
+            if humanoid.WalkSpeed ~= currentBaseSpeed then
+                currentBaseSpeed = humanoid.WalkSpeed
+            end
+        end
+    end)
+end
+
+-- Setup the sprint system for a character
+local function setupSprint(character)
+    local humanoid = character:WaitForChild("Humanoid")
+    humanoid.WalkSpeed = defaultBaseSpeed
+    currentBaseSpeed = defaultBaseSpeed
+
+    overrideWalkSpeed(humanoid, character)
+    enforceSpeed(humanoid, character)
+    
+    -- For debugging/tracking, print the WalkSpeed every 0.5 seconds:
+    spawn(function()
+        while humanoid and humanoid.Parent do
+            print("Current WalkSpeed:", humanoid.WalkSpeed, "Base:", currentBaseSpeed)
+            wait(0.5)
+        end
+    end)
+end
+
+-- Setup for the current character if available.
+if player.Character then
+    setupSprint(player.Character)
+end
+
+-- Listen for new characters (e.g. on respawn)
+player.CharacterAdded:Connect(function(character)
+    setupSprint(character)
+end)
