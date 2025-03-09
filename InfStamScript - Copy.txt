@@ -1,43 +1,28 @@
--- This script is meant to be injected via an executor.
--- It tracks external changes to the player's WalkSpeed (to allow path boosts),
--- applies a sprint multiplier when LeftShift is held,
--- and keeps stamina/overhead overrides as needed.
+-- InfStam.txt (Modified to support stopping)
+local infstam = {}
+infstam.running = true
+infstam.enabled = true
+infstam.connections = {}
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
-
 local player = Players.LocalPlayer
-
--- Global flag and commands for Infinite Stamina mode
-_G.InfStamEnabled = true
-_G.InfStamOn = function()
-    _G.InfStamEnabled = true
-    print("[DEBUG] InfStam mode turned ON")
-end
-_G.InfStamOff = function()
-    _G.InfStamEnabled = false
-    print("[DEBUG] InfStam mode turned OFF")
-end
 
 -- Default base speed and sprint multiplier
 local defaultBaseSpeed = 15
 local sprintMultiplier = 23 / 15  -- ≈1.5333
-
--- We'll track the player's current base speed (which may be externally boosted)
 local currentBaseSpeed = defaultBaseSpeed
-
--- Flags for controlling sprint
-local overheadActive = false  -- true when spacebar (overhead) is held
+local overheadActive = false
 
 -- Overhead detection (using spacebar)
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
+infstam.connections.inputBegan = UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.KeyCode == Enum.KeyCode.Space then
         overheadActive = true
     end
 end)
-UserInputService.InputEnded:Connect(function(input, gameProcessed)
+infstam.connections.inputEnded = UserInputService.InputEnded:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.KeyCode == Enum.KeyCode.Space then
         overheadActive = false
@@ -46,25 +31,19 @@ end)
 
 -- Metamethod hook to intercept WalkSpeed changes on the humanoid.
 local function overrideWalkSpeed(humanoid, character)
-    local stamina = character:FindFirstChild("Stamina")
     local mt = getrawmetatable(game)
     local oldNewIndex = mt.__newindex
     setreadonly(mt, false)
     mt.__newindex = newcclosure(function(t, k, v)
         if t == humanoid and k == "WalkSpeed" then
-            if not _G.InfStamEnabled then
-                -- When InfStam is disabled, allow external assignments.
+            if not infstam.enabled then
                 currentBaseSpeed = v
                 return oldNewIndex(t, k, v)
             end
-
-            -- When InfStam is enabled, check if LeftShift is held or overhead is active.
             if not UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or overheadActive then
                 currentBaseSpeed = v
                 return oldNewIndex(t, k, v)
             else
-                -- When LeftShift is held (and overhead is not active),
-                -- if stamina is 0 force sprint multiplier; otherwise, use sprint multiplier.
                 return oldNewIndex(t, k, currentBaseSpeed * sprintMultiplier)
             end
         end
@@ -75,19 +54,15 @@ end
 
 -- RenderStepped loop to enforce our desired WalkSpeed each frame.
 local function enforceSpeed(humanoid, character)
-    local stamina = character:FindFirstChild("Stamina")
-    RunService.RenderStepped:Connect(function()
-        if not _G.InfStamEnabled then
-            -- When disabled, do not override WalkSpeed.
-            return
-        end
-
+    return RunService.RenderStepped:Connect(function(deltaTime)
+        if not infstam.enabled then return end
+        local stamina = character:FindFirstChild("Stamina")
         -- Priority: if overhead is active, force base speed.
         if overheadActive then
             if humanoid.WalkSpeed ~= currentBaseSpeed then
                 humanoid.WalkSpeed = currentBaseSpeed
             end
-        -- If stamina is 0, force sprint speed regardless.
+        -- If stamina is 0, force sprint speed.
         elseif stamina and stamina.Value == 0 then
             if humanoid.WalkSpeed ~= currentBaseSpeed * sprintMultiplier then
                 humanoid.WalkSpeed = currentBaseSpeed * sprintMultiplier
@@ -99,7 +74,6 @@ local function enforceSpeed(humanoid, character)
             end
         else
             -- When not sprinting, allow external changes.
-            -- Update our base speed if external scripts change WalkSpeed (like from a path boost).
             if humanoid.WalkSpeed ~= currentBaseSpeed then
                 currentBaseSpeed = humanoid.WalkSpeed
             end
@@ -114,13 +88,12 @@ local function setupSprint(character)
     currentBaseSpeed = defaultBaseSpeed
 
     overrideWalkSpeed(humanoid, character)
-    enforceSpeed(humanoid, character)
+    infstam.renderConnection = enforceSpeed(humanoid, character)
     
-    -- For debugging/tracking, print the WalkSpeed every 0.5 seconds:
-    spawn(function()
-        while humanoid and humanoid.Parent do
+    -- For debugging: print the WalkSpeed every 0.5 seconds using Heartbeat.
+    infstam.printLoop = RunService.Heartbeat:Connect(function()
+        if humanoid and humanoid.Parent then
             print("Current WalkSpeed:", humanoid.WalkSpeed, "Base:", currentBaseSpeed)
-            wait(0.5)
         end
     end)
 end
@@ -131,6 +104,41 @@ if player.Character then
 end
 
 -- Listen for new characters (e.g. on respawn)
-player.CharacterAdded:Connect(function(character)
+infstam.characterAdded = player.CharacterAdded:Connect(function(character)
     setupSprint(character)
 end)
+
+-- Global commands for enabling/disabling InfStam mode.
+_G.InfStamOn = function()
+    infstam.enabled = true
+    print("[DEBUG] InfStam mode turned ON")
+end
+_G.InfStamOff = function()
+    infstam.enabled = false
+    print("[DEBUG] InfStam mode turned OFF")
+end
+
+-- Stop method to cleanly disconnect all connections and stop the script.
+function infstam.stop()
+    infstam.running = false
+    infstam.enabled = false
+    if infstam.connections.inputBegan then
+        infstam.connections.inputBegan:Disconnect()
+    end
+    if infstam.connections.inputEnded then
+        infstam.connections.inputEnded:Disconnect()
+    end
+    if infstam.renderConnection then
+        infstam.renderConnection:Disconnect()
+    end
+    if infstam.printLoop then
+        infstam.printLoop:Disconnect()
+    end
+    if infstam.characterAdded then
+        infstam.characterAdded:Disconnect()
+    end
+    print("[DEBUG] InfStam script stopped.")
+end
+
+print("[DEBUG] InfStam script started.")
+return infstam
