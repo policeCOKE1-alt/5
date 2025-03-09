@@ -9,6 +9,17 @@ local RunService = game:GetService("RunService")
 
 local player = Players.LocalPlayer
 
+-- Global flag and commands for Infinite Stamina mode
+_G.InfStamEnabled = true
+_G.InfStamOn = function()
+    _G.InfStamEnabled = true
+    print("[DEBUG] InfStam mode turned ON")
+end
+_G.InfStamOff = function()
+    _G.InfStamEnabled = false
+    print("[DEBUG] InfStam mode turned OFF")
+end
+
 -- Default base speed and sprint multiplier
 local defaultBaseSpeed = 15
 local sprintMultiplier = 23 / 15  -- ≈1.5333
@@ -18,7 +29,6 @@ local currentBaseSpeed = defaultBaseSpeed
 
 -- Flags for controlling sprint
 local overheadActive = false  -- true when spacebar (overhead) is held
--- Stamina override: if a NumberValue named "Stamina" exists and its value is 0, force sprint
 
 -- Overhead detection (using spacebar)
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
@@ -42,19 +52,20 @@ local function overrideWalkSpeed(humanoid, character)
     setreadonly(mt, false)
     mt.__newindex = newcclosure(function(t, k, v)
         if t == humanoid and k == "WalkSpeed" then
-            -- When not sprinting (LeftShift not held) or when overhead is active,
-            -- allow external assignments to update currentBaseSpeed.
+            if not _G.InfStamEnabled then
+                -- When InfStam is disabled, allow external assignments.
+                currentBaseSpeed = v
+                return oldNewIndex(t, k, v)
+            end
+
+            -- When InfStam is enabled, check if LeftShift is held or overhead is active.
             if not UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or overheadActive then
                 currentBaseSpeed = v
                 return oldNewIndex(t, k, v)
             else
                 -- When LeftShift is held (and overhead is not active),
                 -- if stamina is 0 force sprint multiplier; otherwise, use sprint multiplier.
-                if stamina and stamina.Value == 0 then
-                    return oldNewIndex(t, k, currentBaseSpeed * sprintMultiplier)
-                else
-                    return oldNewIndex(t, k, currentBaseSpeed * sprintMultiplier)
-                end
+                return oldNewIndex(t, k, currentBaseSpeed * sprintMultiplier)
             end
         end
         return oldNewIndex(t, k, v)
@@ -66,6 +77,11 @@ end
 local function enforceSpeed(humanoid, character)
     local stamina = character:FindFirstChild("Stamina")
     RunService.RenderStepped:Connect(function()
+        if not _G.InfStamEnabled then
+            -- When disabled, do not override WalkSpeed.
+            return
+        end
+
         -- Priority: if overhead is active, force base speed.
         if overheadActive then
             if humanoid.WalkSpeed ~= currentBaseSpeed then
