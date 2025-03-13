@@ -57,23 +57,19 @@ local function enforceSpeed(humanoid, character)
     return RunService.RenderStepped:Connect(function(deltaTime)
         if not infstam.enabled then return end
         local stamina = character:FindFirstChild("Stamina")
-        -- Priority: if overhead is active, force base speed.
         if overheadActive then
             if humanoid.WalkSpeed ~= currentBaseSpeed then
                 humanoid.WalkSpeed = currentBaseSpeed
             end
-        -- If stamina is 0, force sprint speed.
         elseif stamina and stamina.Value == 0 then
             if humanoid.WalkSpeed ~= currentBaseSpeed * sprintMultiplier then
                 humanoid.WalkSpeed = currentBaseSpeed * sprintMultiplier
             end
-        -- If LeftShift is held, enforce sprint multiplier.
         elseif UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
             if humanoid.WalkSpeed ~= currentBaseSpeed * sprintMultiplier then
                 humanoid.WalkSpeed = currentBaseSpeed * sprintMultiplier
             end
         else
-            -- When not sprinting, allow external changes.
             if humanoid.WalkSpeed ~= currentBaseSpeed then
                 currentBaseSpeed = humanoid.WalkSpeed
             end
@@ -90,10 +86,9 @@ local function setupSprint(character)
     overrideWalkSpeed(humanoid, character)
     infstam.renderConnection = enforceSpeed(humanoid, character)
     
-    -- For debugging: print the WalkSpeed every 0.5 seconds using Heartbeat.
     infstam.printLoop = RunService.Heartbeat:Connect(function()
         if humanoid and humanoid.Parent then
-            print("Current WalkSpeed:", humanoid.WalkSpeed, "Base:", currentBaseSpeed)
+            -- Debug print removed
         end
     end)
 end
@@ -111,11 +106,9 @@ end)
 -- Global commands for enabling/disabling InfStam mode.
 _G.InfStamOn = function()
     infstam.enabled = true
-    print("[DEBUG] InfStam mode turned ON")
 end
 _G.InfStamOff = function()
     infstam.enabled = false
-    print("[DEBUG] InfStam mode turned OFF")
 end
 
 -- Stop method to cleanly disconnect all connections and stop the script.
@@ -137,8 +130,6 @@ function infstam.stop()
     if infstam.characterAdded then
         infstam.characterAdded:Disconnect()
     end
-    print("[DEBUG] InfStam script stopped.")
 end
 
-print("[DEBUG] InfStam script started.")
 return infstam
